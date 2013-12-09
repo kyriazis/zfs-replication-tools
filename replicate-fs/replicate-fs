@@ -2,6 +2,12 @@
 
 use IPC::Open3;
 
+if ($ARGV[0] eq "-v") {
+	$verbose = 1;
+	print "Verbose output\n";
+	shift;
+}
+
 if ($#ARGV != 2) {
 	print "Usage: replicate-fs source-host source-fs dest-fs\n";
 	exit 1;
@@ -16,6 +22,7 @@ $destfsunderscore = $destfs;
 $destfsunderscore =~ s/\//_/g; # subst slash with something else
 open(FILE, "</var/run/replicate-fs-$destfsunderscore");
 $v = <FILE>; chop $v;
+close FILE;
 if ($v eq "1") {
 	# another replication task running; exit
 	exit 0;
@@ -28,7 +35,7 @@ $out = <REMOTE>;
 chop $out;
 close REMOTE;
 if ($out ne "yes") {
-	print "Remote communication failed.  ssh set up correctly?\n";
+	print "Remote communication failed.  Is ssh set up correctly?\n";
 	exit 1;
 }
 
@@ -36,6 +43,10 @@ if ($out ne "yes") {
 open(REMOTE, "ssh $sourcehost zfs list -t snapshot | grep $sourcefs@ |");
 @remotesnap = <REMOTE>;
 chop @remotesnap;
+if (scalar @remotesnap == 0) {
+	print "Remote has no snapshots.  Can replicate without snapshots\n";
+	exit 1;
+}
 map { s/ .*$//; } @remotesnap; # grab only snapshot name
 %remotehash = map { $_ => 1 } @remotesnap;
 close REMOTE;
@@ -52,8 +63,12 @@ close LOCAL;
 for $snap (@localsnap) {
 	if (!$remotehash{$snap}) {
 		# local snap does not exist in remote
-		print "zfs destroy $snap\n";
-		system("zfs destroy $snap");
+		if ($verbose) { print "zfs destroy $snap\n"; }
+		$ret = system("zfs destroy $snap");
+		if ($ret) {
+			print "zfs destroy $snap failed!\n";
+			exit 1;
+		}
 	}
 }
 
@@ -64,21 +79,33 @@ for $snap (@remotesnap) {
 		# if snapshot does not exist, we need to copy
 		if ($oldsnap eq "") {
 			# first one
-			print "zfs copy first one $snap\n";
+			if ($verbose) { print "zfs copy first one $snap\n"; }
 			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nv $snap");
 			waitpid $pid, 0;
+			if ($?) {
+				print "zfs copy $snap (first) failed\n with $?\n";
+				exit 1;
+			}
 			@out = <serr>;
-			#print $out[1];
+			if ($verbose) { print "\t" . $out[1]; }
 		} else {
-			print "zfs copy $oldsnap $snap\n";
+			if ($verbose) { print "zfs copy $oldsnap $snap\n"; }
 			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nvi $oldsnap $snap");
 			waitpid $pid, 0;
+			if ($?) {
+				print "dryrun zfs copy $oldsnap $snap failed with $?\n";
+				exit 1;
+			}
 			@out = <serr>;
-			print "\t" . $out[1];
+			if ($verbose) { print "\t" . $out[1]; }
 			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -i $oldsnap $snap | zfs receive -vF $snap");
 			waitpid $pid, 0;
+			if ($?) {
+				print "zfs copy $oldsnap $snap failed with $?\n";
+				exit 1;
+			}
 			@out = <sout>;
-			print "\t" . $out[1];
+			if ($verbose) { print "\t" . $out[1]; }
 		}
 	}
 	$oldsnap = $snap;
