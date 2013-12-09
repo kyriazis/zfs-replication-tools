@@ -1,0 +1,87 @@
+#!/usr/bin/perl
+
+use IPC::Open3;
+
+if ($#ARGV != 2) {
+	print "Usage: replicate-fs source-host source-fs dest-fs\n";
+	exit 1;
+}
+
+$sourcehost = $ARGV[0];
+$sourcefs = $ARGV[1];
+$destfs = $ARGV[2];
+
+# test if already existing replication task running on this destfs
+$destfsunderscore = $destfs;
+$destfsunderscore =~ s/\//_/g; # subst slash with something else
+open(FILE, "</var/run/replicate-fs-$destfsunderscore");
+$v = <FILE>; chop $v;
+if ($v eq "1") {
+	# another replication task running; exit
+	exit 0;
+}
+system ("echo 1 > /var/run/replicate-fs-$destfsunderscore");
+
+# test remote connection
+open(REMOTE, "ssh $sourcehost echo yes |");
+$out = <REMOTE>;
+chop $out;
+close REMOTE;
+if ($out ne "yes") {
+	print "Remote communication failed.  ssh set up correctly?\n";
+	exit 1;
+}
+
+# get list of remote shapshots
+open(REMOTE, "ssh $sourcehost zfs list -t snapshot | grep $sourcefs@ |");
+@remotesnap = <REMOTE>;
+chop @remotesnap;
+map { s/ .*$//; } @remotesnap; # grab only snapshot name
+%remotehash = map { $_ => 1 } @remotesnap;
+close REMOTE;
+
+# get list of local snapshots
+open(LOCAL, "zfs list -t snapshot | grep $destfs@ |");
+@localsnap = <LOCAL>;
+chop @localsnap;
+map { s/ .*$//; } @localsnap; # grab only snapshot name
+%localhash = map { $_ => 1 } @localsnap;
+close LOCAL;
+
+# loop through local snapshots and remove the ones that are not in the remote
+for $snap (@localsnap) {
+	if (!$remotehash{$snap}) {
+		# local snap does not exist in remote
+		print "zfs destroy $snap\n";
+		system("zfs destroy $snap");
+	}
+}
+
+# loop through remote snapshots and add them to local if they don't exist
+$oldsnap = "";
+for $snap (@remotesnap) {
+	if (!$localhash{$snap}) {
+		# if snapshot does not exist, we need to copy
+		if ($oldsnap eq "") {
+			# first one
+			print "zfs copy first one $snap\n";
+			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nv $snap");
+			waitpid $pid, 0;
+			@out = <serr>;
+			#print $out[1];
+		} else {
+			print "zfs copy $oldsnap $snap\n";
+			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nvi $oldsnap $snap");
+			waitpid $pid, 0;
+			@out = <serr>;
+			print "\t" . $out[1];
+			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -i $oldsnap $snap | zfs receive -vF $snap");
+			waitpid $pid, 0;
+			@out = <sout>;
+			print "\t" . $out[1];
+		}
+	}
+	$oldsnap = $snap;
+}
+
+unlink("/var/run/replicate-fs-$destfsunderscore");
