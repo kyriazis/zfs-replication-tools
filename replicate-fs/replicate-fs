@@ -25,6 +25,7 @@ $v = <FILE>; chop $v;
 close FILE;
 if ($v eq "1") {
 	# another replication task running; exit
+	if ($verbose) { print "/var/run lock exists.  Exiting..\n"; }
 	exit 0;
 }
 system ("echo 1 > /var/run/replicate-fs-$destfsunderscore");
@@ -36,6 +37,7 @@ chop $out;
 close REMOTE;
 if ($out ne "yes") {
 	print "Remote communication failed.  Is ssh set up correctly?\n";
+	unlink("/var/run/replicate-fs-$destfsunderscore");
 	exit 1;
 }
 
@@ -45,6 +47,7 @@ open(REMOTE, "ssh $sourcehost zfs list -t snapshot | grep $sourcefs@ |");
 chop @remotesnap;
 if (scalar @remotesnap == 0) {
 	print "Remote has no snapshots.  Can replicate without snapshots\n";
+	unlink("/var/run/replicate-fs-$destfsunderscore");
 	exit 1;
 }
 map { s/ .*$//; } @remotesnap; # grab only snapshot name
@@ -67,6 +70,7 @@ for $snap (@localsnap) {
 		$ret = system("zfs destroy $snap");
 		if ($ret) {
 			print "zfs destroy $snap failed!\n";
+			unlink("/var/run/replicate-fs-$destfsunderscore");
 			exit 1;
 		}
 	}
@@ -84,6 +88,7 @@ for $snap (@remotesnap) {
 			waitpid $pid, 0;
 			if ($?) {
 				print "zfs copy $snap (first) failed\n with $?\n";
+				unlink("/var/run/replicate-fs-$destfsunderscore");
 				exit 1;
 			}
 			@out = <serr>;
@@ -94,7 +99,8 @@ for $snap (@remotesnap) {
 			waitpid $pid, 0;
 			if ($?) {
 				print "dryrun zfs copy $oldsnap $snap failed with $?\n";
-				exit 1;
+				unlink("/var/run/replicate-fs-$destfsunderscore");
+				exit 0;
 			}
 			@out = <serr>;
 			if ($verbose) { print "\t" . $out[1]; }
@@ -102,6 +108,7 @@ for $snap (@remotesnap) {
 			waitpid $pid, 0;
 			if ($?) {
 				print "zfs copy $oldsnap $snap failed with $?\n";
+				unlink("/var/run/replicate-fs-$destfsunderscore");
 				exit 1;
 			}
 			@out = <sout>;
