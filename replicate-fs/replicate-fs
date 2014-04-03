@@ -46,7 +46,7 @@ open(REMOTE, "ssh $sourcehost zfs list -t snapshot | grep $sourcefs@ |");
 @remotesnap = <REMOTE>;
 chop @remotesnap;
 if (scalar @remotesnap == 0) {
-	print "Remote has no snapshots.  Can replicate without snapshots\n";
+	print "Remote has no snapshots.  Can't replicate without snapshots\n";
 	unlink("/var/run/replicate-fs-$destfsunderscore");
 	exit 1;
 }
@@ -92,6 +92,15 @@ for $snap (@remotesnap) {
 				exit 1;
 			}
 			@out = <serr>;
+			if ($verbose) { print "\t" . $out[1]; }
+			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send $snap | zfs receive -vF $snap");
+			waitpid $pid, 0;
+			if ($?) {
+				print "zfs copy $snap (first) failed\n with $?\n";
+				unlink("/var/run/replicate_fs_$destfsunderscore");
+				exit 1;
+			}
+			@out = <sout>;
 			if ($verbose) { print "\t" . $out[1]; }
 		} else {
 			if ($verbose) { print "zfs copy $oldsnap $snap\n"; }
