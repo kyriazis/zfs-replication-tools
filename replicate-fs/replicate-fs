@@ -17,6 +17,13 @@ $sourcehost = $ARGV[0];
 $sourcefs = $ARGV[1];
 $destfs = $ARGV[2];
 
+# fastpath for localhost
+if ($sourcehost eq "localhost") {
+	$sshcommand = "";
+} else {
+	$sshcommand = "ssh $sourcehost";
+}
+
 # test if already existing replication task running on this destfs
 $destfsunderscore = $destfs;
 $destfsunderscore =~ s/\//_/g; # subst slash with something else
@@ -31,7 +38,7 @@ if ($v eq "1") {
 system ("echo 1 > /var/run/replicate-fs-$destfsunderscore");
 
 # test remote connection
-open(REMOTE, "ssh $sourcehost echo yes |");
+open(REMOTE, "$sshcommand echo yes |");
 $out = <REMOTE>;
 chop $out;
 close REMOTE;
@@ -42,7 +49,7 @@ if ($out ne "yes") {
 }
 
 # get list of remote shapshots
-open(REMOTE, "ssh $sourcehost zfs list -t snapshot | grep $sourcefs@ |");
+open(REMOTE, "$sshcommand zfs list -t snapshot | grep $sourcefs@ |");
 @remotesnap = <REMOTE>;
 chop @remotesnap;
 if (scalar @remotesnap == 0) {
@@ -87,7 +94,7 @@ for $snap (@remotesnap) {
 		if ($oldsnap eq "") {
 			# first one
 			if ($verbose) { print "zfs copy first one $snap\n"; }
-			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nv $snap");
+			$pid = open3(sin, sout, serr, "$sshcommand zfs send -nv $snap");
 			waitpid $pid, 0;
 			if ($?) {
 				print "zfs copy $snap (first) failed with $?\n";
@@ -96,7 +103,7 @@ for $snap (@remotesnap) {
 			}
 			@out = <serr>;
 			if ($verbose) { print "\t" . $out[1]; }
-			$command = "ssh $sourcehost zfs send $snap | zfs receive -vF $localsnap";
+			$command = "$sshcommand zfs send $snap | zfs receive -vF $localsnap";
 			$pid = open3(sin, sout, serr, $command);
 			waitpid $pid, 0;
 			if ($?) {
@@ -109,7 +116,7 @@ for $snap (@remotesnap) {
 			if ($verbose) { print "\t" . $out[1]; }
 		} else {
 			if ($verbose) { print "zfs copy $oldsnap $localsnap\n"; }
-			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nvi $oldsnap $snap");
+			$pid = open3(sin, sout, serr, "$sshcommand zfs send -nvi $oldsnap $snap");
 			waitpid $pid, 0;
 			if ($?) {
 				print "dryrun zfs copy $oldsnap $snap failed with $?\n";
@@ -118,7 +125,7 @@ for $snap (@remotesnap) {
 			}
 			@out = <serr>;
 			if ($verbose) { print "\t" . $out[1]; }
-			$command = "ssh $sourcehost zfs send -i $oldsnap $snap | zfs receive -vF $localsnap";
+			$command = "$sshcommand zfs send -i $oldsnap $snap | zfs receive -vF $localsnap";
 			$pid = open3(sin, sout, serr, $command);
 			waitpid $pid, 0;
 			if ($?) {
