@@ -108,7 +108,7 @@ for $snap (@remotesnap) {
 			@out = <sout>;
 			if ($verbose) { print "\t" . $out[1]; }
 		} else {
-			if ($verbose) { print "zfs copy $oldsnap $snap\n"; }
+			if ($verbose) { print "zfs copy $oldsnap $localsnap\n"; }
 			$pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -nvi $oldsnap $snap");
 			waitpid $pid, 0;
 			if ($?) {
@@ -120,10 +120,9 @@ for $snap (@remotesnap) {
 			if ($verbose) { print "\t" . $out[1]; }
 			$command = "ssh $sourcehost zfs send -i $oldsnap $snap | zfs receive -vF $localsnap";
 			$pid = open3(sin, sout, serr, $command);
-			# $pid = open3(sin, sout, serr, "ssh $sourcehost zfs send -i $oldsnap $snap | zfs receive -vF $snap");
 			waitpid $pid, 0;
 			if ($?) {
-				print "zfs copy $oldsnap $snap failed with $?\n";
+				print "zfs copy $oldsnap $localsnap failed with $?\n";
 				print "command: $command\n";
 				unlink("/var/run/replicate-fs-$destfsunderscore");
 				exit 1;
