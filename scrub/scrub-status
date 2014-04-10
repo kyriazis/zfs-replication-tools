@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+
+if ($ARGV[0] eq "-v") {
+	$verbose = 1;
+	printf "Verbose output\n";
+	shift;
+}
+
+if ($#ARGV != 0) {
+	print "Usage: scrub-status pool\n";
+	exit 1;
+}
+
+$pool = $ARGV[0];
+
+$command = "zpool status $pool";
+
+# get zpool status output
+open(COMMAND, "$command |");
+@output = <COMMAND>;
+chop @output;
+close COMMAND;
+
+$inscan = 0;
+for $line (@output) {
+	if ($line =~ "  scan:") {
+		$inscan = 1;
+	}
+	if ($line =~ "config:") {
+		$inscan = 0;
+	}
+	if ($inscan) { push @scan, $line; }
+}
+
+if ($scan[0] =~ "in progress") {
+	# scrub in progress
+	@arr = split ' ', $scan[1];
+	$arr[6] =~ s/,//;
+	$toprint = "$arr[0] $arr[4] $arr[6] $arr[7]";
+	@arr = split ' ', $scan[2];
+	$toprint .= " $arr[2]";
+
+	if ($arr[0] != 0) {
+		$toprint .= " $arr[0]";
+		exit 1;
+	}
+
+	print "$toprint\n";
+}
