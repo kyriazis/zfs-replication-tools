@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+#
+# syncoid does a good job pushing new snapshots to the dest zpool,
+# however it does not remove dest snapshots that are not on the source
+#
+# The guideline is that one would need to run sanoid on the remote host
+# to clean up remote snapshots.  This can be done on a different schedule
+# than on the source, which adds extra flexibility
+#
+# When the remote host is FreeNAS, however, one cannot run sanoid on it,
+# due to the lack of the correct perl modules.  It would be nice if sanoid
+# allowed managing remote zpools, but it doesn't.
+#
+# This little script fetches snapshots from the dest (remote) host, compares
+# them wih the source, and deletes remote snapshots that are not on the source.
+#
+
+use Getopt::Long;
+
+GetOptions(\%args, "localfs=s", "remotefs=s", "remotehost=s", "dryrun", "dry-run");
+
+my $zfs = 'zfs';
+my $ssh = "ssh";
+
+$localfs = $args{'localfs'};
+if (!defined($localfs)) {
+    die ("localfs not defined");
+}
+
+$remotefs = $args{'remotefs'};
+if (!defined($remotefs)) {
+    die ("remotefs not defined");
+}
+
+$remotehost = $args{'remotehost'};
+if (!defined($remotehost)) {
+    die ("remotehost not defined");
+}
+
+$dryrun = $args{'dryrun'} || $args{'dry-run'};
+if ($dryrun) {
+    print "dryrun.  not actually deleting snapshots\n";
+}
+
+# get local snapshots
+
+open CMD, "$zfs list -Ho name -t snapshot $localfs |" || die $@;
+my %localsnaps;
+while($line = <CMD>) {
+    chop $line;
+    $line =~ s/^.*@//; # chop off zpool name, just snapshot name
+    $localsnaps{$line} = 1;
+}
+close CMD;
+
+# get remote snapshots
+
+open CMD, "$ssh $remotehost $zfs list -Ho name -t snapshot $remotefs |" || die $@;
+my @remotesnaps;
+while($line = <CMD>) {
+    chop $line;
+    $line =~ s/^.*@//; # chop off zpool name, just snapshot name
+    push @remotesnaps, $line;
+}
+close CMD;
+
+# iterate over remote snapshots (in order) to see what doesn't exists locally
+# and therefore needs to be deleted
+for $i (0 .. $#remotesnaps) {
+    $snap = $remotesnaps[$i];
+    if ($localsnaps{$snap} != 1) {
+	$command = "$ssh $remotehost $zfs destroy $remotefs\@$snap";
+	print "$command\n";
+	if (!$dryrun) {
+	    system($command);
+	}
+    }
+}
